@@ -34,7 +34,6 @@ class GRU(nn.Module):
         x_embed = self.embed(x)
         # batch_size * sentence_len * embedding_size
 
-
         x_embed = rnn_utils.pack_padded_sequence(x_embed, length, batch_first=True, enforce_sorted=False)
 
         x_out, _ = self.GRU(x_embed)
