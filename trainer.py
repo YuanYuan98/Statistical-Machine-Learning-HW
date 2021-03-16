@@ -11,7 +11,9 @@ import torch.optim as optim
 from config import Config
 from data_loader import DataLoader
 from sklearn import metrics
-from sklearn.metrics import f1_score,precision_score,recall_score
+from sklearn.metrics import f1_score,precision_score,recall_score,log_loss
+
+import numpy as np
 
 from sklearn.model_selection import train_test_split
 from model import *
@@ -62,12 +64,13 @@ class Trainer(object):
 
             loss = criterion(preds, target)/preds.shape[0]
 
-            p,t = preds.cpu().detach().numpy(),target.cpu().detach().numpy()
- 
+            p,t = np.concatenate(preds.cpu().detach().numpy(),axis=0),np.concatenate(target.cpu().detach().numpy(),axis=0)
 
-            AUC = metrics.roc_auc_score(t, p, average='micro')
+            score = log_loss(t,p.astype(np.float64))
 
-        return loss, AUC
+            score = 1-score
+
+        return loss, score
         
 
     def test(self,model,data_all,criterion):
@@ -81,10 +84,7 @@ class Trainer(object):
 
         preds = model.forward(data,length)
 
-        preds = [[index, " ".join(str(i) for i in s)] for index, s in enumerate(preds.cpu().detach().numpy().tolist())]
-
-        preds = pd.DataFrame(preds,columns = ['report_ID','Prediction'])
-        return preds
+        return preds.cpu().detach().numpy().astype(np.float64).tolist()
 
 
     def Train_Step(self):
@@ -96,7 +96,15 @@ class Trainer(object):
         train_data, val_data, test_data = dataloader.data_load()
 
         print('\n------------------------- Initialize Model -------------------------')
-        model = LSTM(self.config,self.args)
+        if self.args.model==0:
+            model = GRU(self.config,self.args)
+
+        elif self.args.model==1:
+            model = LSTM(self.config,self.args)
+
+        elif self.args.model==2:
+            model = dis_attn(self.config,self.args)
+
         criterion = nn.BCELoss(reduction='sum')
 
         if self.args.use_cuda:
@@ -112,7 +120,12 @@ class Trainer(object):
 
             print('\n------------------------- Training -------------------------')
             for epoch in range(self.args.epoch_num):
+
+                model.train()
+
                 train_loss = self.train_epoch(model,train_data,criterion,optimizer)
+
+                model.eval()
                 val_loss, AUC_test = self.validate(model,val_data,criterion)
 
                 scheduler.step(val_loss)
@@ -141,11 +154,24 @@ class Trainer(object):
 
         print('\n------------------------- Validate -------------------------')
         model.load_state_dict(torch.load(model_save))
+
+        model.eval()
         
         val_loss, AUC = self.validate(model,val_data,criterion)
         print('Validation Loss: %f; AUC: %f'% (val_loss,AUC))
-        #result = self.test(model,test_data,criterion)
-        #result.to_csv(self.config.result_file+model_save)
+
+        #return [AUC,model_save]
+
+        result = self.test(model,test_data,criterion)
+
+        if self.args.test_mode==1:
+
+            with open('result/test_result.csv','w') as f:
+                for index, r in enumerate(result):
+                    f.write(str(index))
+                    f.write('|,|')
+                    f.write(' '.join([str(i) for i in r]))
+                    f.write('\n')
 
 
         
